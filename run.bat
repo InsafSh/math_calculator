@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
-title Калькулятор аналитической геометрии (Глава 4: Плоскости и прямые)
-echo Запуск приложения...
+title MathCalc
+echo Запуск MathCalc...
 python main.py
 if %ERRORLEVEL% NEQ 0 (
     echo.
