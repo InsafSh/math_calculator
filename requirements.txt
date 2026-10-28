@@ -1,0 +1,4 @@
+customtkinter>=6.0.0
+sympy>=1.13.0
+numpy>=1.26.0
+matplotlib>=3.8.0

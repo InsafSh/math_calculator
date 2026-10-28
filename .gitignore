@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Редакторы и ОС
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Временный файл расширения Code Runner (VS Code)
+tempCodeRunnerFile.py
+
+# Учебники и прочие материалы, не входящие в код
+books/
