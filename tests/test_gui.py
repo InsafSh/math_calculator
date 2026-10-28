@@ -43,6 +43,21 @@ def test_html_has_no_empty_colored_blocks(app):
             block = block.next()
 
 
+def test_solution_fits_narrow_width(app):
+    """Длинные строки (в т.ч. в карточках формул и ответов) переносятся и не выходят за ширину окна."""
+    from PySide6.QtGui import QTextOption
+    width = 520
+    for task in all_tasks():
+        for preset in [None] + task.presets:
+            doc = QTextDocument()
+            opt = QTextOption()
+            opt.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+            doc.setDefaultTextOption(opt)
+            doc.setHtml(steps_to_html(task.run(preset.values if preset else None).steps))
+            doc.setTextWidth(width)
+            assert doc.idealWidth() <= width + 1, (task.id, preset and preset.name, doc.idealWidth())
+
+
 def test_every_task_page_solves(window, app):
     for task in all_tasks():
         window.open_item(task.id)

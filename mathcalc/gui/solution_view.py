@@ -34,7 +34,7 @@ def steps_to_html(text: str, dark: bool = True) -> str:
             body = "\n".join(" " + html.escape(l) for l in [""] + buf + [""])
             out.append(
                 f'<pre style="background-color:{bg}; color:{fg}; font-family:Consolas,\'Cascadia Mono\',monospace;'
-                f' font-size:10.5pt; font-weight:bold; margin:4px 0 6px 0;">{body}</pre>')
+                f' font-size:10.5pt; font-weight:bold; margin:4px 0 6px 0; white-space:pre-wrap;">{body}</pre>')
         buf, buf_kind = [], None
 
     for raw in text.split('\n'):

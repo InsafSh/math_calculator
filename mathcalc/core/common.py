@@ -132,51 +132,95 @@ def fmt_vector(v: Tuple[Any, Any, Any]) -> str:
     return f"{{{fmt_num(v[0])};  {fmt_num(v[1])};  {fmt_num(v[2])}}}"
 
 
-def simplify_plane_eq(A: sp.Expr, B: sp.Expr, C: sp.Expr, D: sp.Expr) -> Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr, str]:
+def _is_zero(c) -> bool:
+    c = sp.sympify(c)
+    return c == 0 or (c.is_number and abs(float(sp.N(c, 30))) < 1e-14)
+
+
+def _normalize_coeffs(coeffs: List[sp.Expr]) -> List[sp.Expr]:
     """
-    Приведение уравнения плоскости Ax + By + Cz + D = 0 к каноническому целочисленному виду.
+    Нормирование коэффициентов уравнения (они определены с точностью до множителя):
+    рациональные — к взаимно простым целым; иррациональные — деление на первый ненулевой
+    коэффициент с упрощением радикалов. Первый ненулевой коэффициент делается положительным.
     """
-    coeffs = [A, B, C, D]
-    
-    if all(sp.sympify(c).is_rational for c in coeffs):
+    coeffs = [sp.sympify(c) for c in coeffs]
+    coeffs = [sp.Integer(0) if _is_zero(c) else c for c in coeffs]
+    if not all(c.is_rational for c in coeffs):
+        lead = next((c for c in coeffs if c != 0), sp.Integer(1))
+        coeffs = [sp.radsimp(sp.simplify(c / lead)) for c in coeffs]
+    if all(c.is_rational for c in coeffs):
         lcm_den = sp.ilcm(*[sp.Rational(c).q for c in coeffs if c != 0] or [1])
         int_coeffs = [sp.Integer(sp.Rational(c) * lcm_den) for c in coeffs]
         gcd_num = sp.igcd(*[c for c in int_coeffs if c != 0] or [1])
         coeffs = [c // gcd_num for c in int_coeffs]
+    lead = next((c for c in coeffs if c != 0), None)
+    if lead is not None and float(sp.N(lead)) < 0:
+        coeffs = [-c for c in coeffs]
+    return coeffs
 
-    for c in coeffs:
-        if c != 0:
-            if c < 0:
-                coeffs = [-x_ for x_ in coeffs]
-            break
 
-    A_s, B_s, C_s, D_s = coeffs
-    
+def _wrap(txt: str) -> str:
+    """Скобки вокруг составного коэффициента (если их ещё нет)."""
+    return txt if txt.startswith("(") and txt.endswith(")") and txt.count("(") == 1 else f"({txt})"
+
+
+def pretty_expr(e) -> str:
+    """
+    Читаемая запись числового выражения: общий знаменатель, положительные слагаемые первыми,
+    знак «−» вместо «+ -». Например, -103/57 + 13·√82/57 → (13·√82 − 103)/57.
+    """
+    e = sp.radsimp(sp.sympify(e))
+    if not e.is_Add:
+        return to_pretty_math(e)
+    num_, den = sp.fraction(sp.together(e))
+    num_ = sp.expand(num_)
+    if num_.is_Add:
+        args = sorted(num_.args, key=lambda a: (float(sp.N(a)) < 0, -abs(float(sp.N(a)))))
+        parts = []
+        for a in args:
+            neg = float(sp.N(a)) < 0
+            txt = to_pretty_math(-a if neg else a)
+            parts.append(("−" if neg else "") + txt if not parts else (" − " if neg else " + ") + txt)
+        num_txt = "".join(parts)
+    else:
+        num_txt = to_pretty_math(num_)
+    if den == 1:
+        return num_txt
+    return f"({num_txt})/{to_pretty_math(den)}"
+
+
+def linear_eq_str(coeffs, variables) -> str:
+    """
+    Строка «a₁x + a₂y + … + c = 0» без двойных знаков; составные коэффициенты — в скобках.
+    coeffs — коэффициенты при variables и свободный член последним.
+    """
     terms = []
-    if A_s != 0:
-        if A_s == 1: terms.append("x")
-        elif A_s == -1: terms.append("-x")
-        else: terms.append(f"{A_s}x")
-    
-    if B_s != 0:
-        sign = "+ " if B_s > 0 and terms else ("- " if B_s < 0 and terms else ("-" if B_s < 0 else ""))
-        abs_b = abs(B_s)
-        val = "y" if abs_b == 1 else f"{abs_b}y"
-        terms.append(f"{sign}{val}")
+    for c, var in zip(coeffs, list(variables) + [""]):
+        c = sp.sympify(c)
+        if c == 0:
+            continue
+        neg = float(sp.N(c)) < 0
+        a = sp.radsimp(-c) if neg else c
+        if var and a == 1:
+            body = var
+        elif var:
+            body = f"{a}{var}" if a.is_Integer else f"{_wrap(pretty_expr(a))}·{var}"
+        else:
+            body = pretty_expr(a)
+        if not terms:
+            terms.append(f"-{body}" if neg else body)
+        else:
+            terms.append(f"- {body}" if neg else f"+ {body}")
+    return (" ".join(terms) if terms else "0") + " = 0"
 
-    if C_s != 0:
-        sign = "+ " if C_s > 0 and terms else ("- " if C_s < 0 and terms else ("-" if C_s < 0 else ""))
-        abs_c = abs(C_s)
-        val = "z" if abs_c == 1 else f"{abs_c}z"
-        terms.append(f"{sign}{val}")
 
-    if D_s != 0:
-        sign = "+ " if D_s > 0 and terms else ("- " if D_s < 0 and terms else ("-" if D_s < 0 else ""))
-        terms.append(f"{sign}{abs(D_s)}")
-
-    eq_str = " ".join(terms) if terms else "0"
-    eq_str = f"{eq_str} = 0"
-    return A_s, B_s, C_s, D_s, eq_str
+def simplify_plane_eq(A: sp.Expr, B: sp.Expr, C: sp.Expr, D: sp.Expr) -> Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr, str]:
+    """
+    Приведение уравнения плоскости Ax + By + Cz + D = 0 к каноническому виду
+    (целые взаимно простые коэффициенты, если возможно). Возвращает (A, B, C, D, строка).
+    """
+    A_s, B_s, C_s, D_s = _normalize_coeffs([A, B, C, D])
+    return A_s, B_s, C_s, D_s, linear_eq_str([A_s, B_s, C_s, D_s], ["x", "y", "z"])
 
 
 COL_MAIN = "#3B82F6"
