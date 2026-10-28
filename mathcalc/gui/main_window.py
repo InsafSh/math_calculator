@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
-from ..core.geometry.handbook import HANDBOOK_SECTIONS
+from ..core.handbooks import HANDBOOKS
 from ..tasks import get_task, tree
 from .handbook_page import HandbookPage
 from .task_page import TaskPage
@@ -19,7 +19,7 @@ from .theme import apply_theme
 APP_NAME = "MathCalc"
 ROLE_ID = Qt.UserRole
 ROLE_SEARCH = Qt.UserRole + 1
-HANDBOOK_ID = "handbook.geometry"
+HANDBOOK_PREFIX = "handbook:"
 
 
 class MainWindow(QMainWindow):
@@ -81,9 +81,10 @@ class MainWindow(QMainWindow):
                     t_item.setData(0, ROLE_SEARCH, f"{t.title} {t.description}".lower())
                     t_item.setToolTip(0, f"<b>{t.title}</b><br>{t.description}" if t.description else t.title)
                     g_item.addChild(t_item)
-            hb = QTreeWidgetItem(["Справочник по разделу"])
-            hb.setData(0, ROLE_ID, HANDBOOK_ID)
-            s_item.addChild(hb)
+            if section in HANDBOOKS:
+                hb = QTreeWidgetItem(["Справочник по разделу"])
+                hb.setData(0, ROLE_ID, HANDBOOK_PREFIX + section)
+                s_item.addChild(hb)
             s_item.setExpanded(True)
         self.nav.itemClicked.connect(self._on_item)
         self.nav.itemActivated.connect(self._on_item)
@@ -94,6 +95,8 @@ class MainWindow(QMainWindow):
         w = QLabel(
             f"<h2>{APP_NAME} {__version__}</h2>"
             "<p>Выберите задачу в списке слева или найдите её поиском.</p>"
+            "<p>Разделы: обработка эксперимента, функции и графики, математический анализ, "
+            "аналитическая геометрия.</p>"
             "<p>Для каждой задачи: форма ввода, пошаговое решение, 2D-чертёж или 3D-сцена, "
             "экспорт решения (HTML, TXT) и графиков (PNG, SVG, PDF).</p>")
         w.setAlignment(Qt.AlignCenter)
@@ -135,8 +138,12 @@ class MainWindow(QMainWindow):
     def open_item(self, item_id: str):
         page = self.pages.get(item_id)
         if page is None:
-            if item_id == HANDBOOK_ID:
-                page = HandbookPage("Справочник: аналитическая геометрия", HANDBOOK_SECTIONS)
+            if item_id.startswith(HANDBOOK_PREFIX):
+                section = item_id[len(HANDBOOK_PREFIX):]
+                if section not in HANDBOOKS:
+                    return
+                title, sections = HANDBOOKS[section]
+                page = HandbookPage(title, sections)
             else:
                 try:
                     task = get_task(item_id)

@@ -116,10 +116,10 @@ class ConicSolver:
             plot['points'].append((num(w[0]), num(w[1]), name, color))
             return w
 
-        def add_line_uv(p_uv, du, dv, label, color):
+        def add_line_uv(p_uv, du, dv, label, color, style='-'):
             w = to_world(*p_uv)
             dx, dy = dir_world(du, dv)
-            plot['lines'].append((num(w[0]), num(w[1]), dx, dy, label, color))
+            plot['lines'].append((num(w[0]), num(w[1]), dx, dy, label, color, style))
 
         def frame_note(p_uv):
             if sgn(b) == 0:
@@ -229,7 +229,7 @@ class ConicSolver:
                     dd = simp(aa / eps)
                     steps.append(f"   Директрисы: расстояние от центра a/ε = {fmt_num(dd)} вдоль действительной оси")
                     for i_dr, dr in enumerate(dirs):
-                        add_line_uv((u0, v0), dr[0], dr[1], "асимптоты" if i_dr == 0 else "", COL_GRAY)
+                        add_line_uv((u0, v0), dr[0], dr[1], "асимптоты" if i_dr == 0 else "", COL_GRAY, '--')
                     for sg in (-1, 1):
                         if real_u:
                             add_line_uv((u0 + sg * dd, v0), 0, 1, "", COL_PINK)

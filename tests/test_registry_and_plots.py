@@ -19,7 +19,7 @@ def test_task_solves(task, preset):
     res = task.run(preset.values if preset else None)
     assert isinstance(res, Result)
     assert res.steps.strip()
-    assert res.scene2d is not None or res.scene3d is not None
+    assert res.summary.strip()
 
 
 @pytest.mark.parametrize("task", all_tasks(), ids=lambda t: t.id)

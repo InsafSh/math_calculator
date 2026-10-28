@@ -62,28 +62,65 @@ def test_every_task_page_solves(window, app):
     for task in all_tasks():
         window.open_item(task.id)
         page = window.pages[task.id]
-        page.solve()
+        page.solve(blocking=True)
         app.processEvents()
         assert page.error_label.text() == "", (task.id, page.error_label.text())
         assert page.solution.raw_text
+
+
+def _wait(app, cond, timeout=30.0):
+    import time
+    end = time.monotonic() + timeout
+    while not cond() and time.monotonic() < end:
+        app.processEvents()
+        time.sleep(0.01)
+    return cond()
+
+
+def test_background_solve_and_cancel(window, app):
+    """Решение в фоновом потоке: интерфейс получает результат; прерванный результат отбрасывается."""
+    window.open_item("calculus.definite")
+    page = window.pages["calculus.definite"]
+    page.solution.set_placeholder()
+    page.solve()
+    assert not page.btn_solve.isEnabled()
+    assert _wait(app, lambda: page.btn_solve.isEnabled())
+    assert page.solution.raw_text and page.error_label.text() == ""
+
+    page.solution.set_placeholder()
+    page.solve()
+    page.cancel()
+    assert page.btn_solve.isEnabled()
+    _wait(app, lambda: False, timeout=1.5)  # даём потоку завершиться
+    assert page.solution.raw_text == ""      # результат прерванного вычисления не показан
 
 
 def test_bad_input_shows_error_not_exception(window, app):
     window.open_item("geometry.plane.point_normal")
     page = window.pages["geometry.plane.point_normal"]
     page.editors['n'][0].setText("abc+")
-    page.solve()
+    page.solve(blocking=True)
     assert "Не удалось разобрать" in page.error_label.text()
     page.editors['n'][0].setText("2")
-    page.solve()
+    page.solve(blocking=True)
     assert page.error_label.text() == ""
+
+
+def test_text_and_formula_fields(window, app):
+    window.open_item("experiment.fit")
+    page = window.pages["experiment.fit"]
+    page.set_values({'data': "1 2\n2 4.1\n3 5.9\n4 8.2", 'model': "Пропорциональность  y = b·x"})
+    page.solve(blocking=True)
+    assert page.error_label.text() == ""
+    assert abs(page.result.values['params']['b'] - 2.02) < 0.05
+    assert page.tabs.isTabEnabled(page.TAB_2D)
 
 
 def test_preset_loads_values(window, app):
     task = get_task("geometry.planar.triangle")
     window.open_item(task.id)
     page = window.pages[task.id]
-    page._on_preset(2)
+    page._on_preset(2, blocking=True)
     assert page.values()['A'] == task.presets[1].values['A']
 
 
@@ -102,6 +139,14 @@ def test_search_filters_tree(window, app):
                     visible.append(ch.text(0))
     window.search.clear()
     assert visible and all("Треугольник" in v for v in visible)
+
+
+def test_each_section_opens_its_own_handbook(window, app):
+    from mathcalc.core.handbooks import HANDBOOKS
+    from mathcalc.gui.main_window import HANDBOOK_PREFIX
+    for section, (_title, sections) in HANDBOOKS.items():
+        window.open_item(HANDBOOK_PREFIX + section)
+        assert window.pages[HANDBOOK_PREFIX + section].sections is sections
 
 
 def test_theme_switch(window, app):

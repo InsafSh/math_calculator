@@ -3,18 +3,35 @@
 справа — вкладки «Решение», «Чертёж 2D», «3D».
 """
 
+import threading
+import time
 from typing import Any, Dict
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QApplication, QComboBox, QFileDialog, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPlainTextEdit, QPushButton,
     QScrollArea, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from ..core.data import load_table_file
 from ..tasks.registry import Task
 from .plot_widgets import Plot2DWidget, Plot3DWidget
 from .solution_view import SolutionView, steps_to_html
+
+
+def _run_task(task: Task, values: Dict[str, Any]):
+    """Решение задачи; ошибки ввода и математические исключения превращаются в текст для пользователя."""
+    try:
+        return task.run(values), ""
+    except Exception as ex:
+        return None, (str(ex) or ex.__class__.__name__)
+
+
+class _Relay(QObject):
+    """Передаёт результат из рабочего потока в поток интерфейса (сигнал ставится в очередь событий)."""
+    done = Signal(int, object, str)
 
 
 class TaskPage(QWidget):
@@ -27,6 +44,12 @@ class TaskPage(QWidget):
         self.task = task
         self.editors: Dict[str, Any] = {}
         self.result = None
+        self._request = 0
+        self._started = 0.0
+        self._relay = _Relay(self)
+        self._relay.done.connect(self._on_done)
+        self._busy_timer = QTimer(self)
+        self._busy_timer.timeout.connect(self._tick)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)
@@ -94,6 +117,8 @@ class TaskPage(QWidget):
                 cb.setCurrentText(f.default)
                 self.editors[f.key] = cb
                 widget = cb
+            elif f.kind == "text":
+                widget = self._text_editor(f)
             else:
                 e = QLineEdit(str(f.default))
                 e.returnPressed.connect(self.solve)
@@ -109,20 +134,39 @@ class TaskPage(QWidget):
                 vl.addWidget(widget)
                 hint = QLabel(f.hint)
                 hint.setObjectName("hint")
+                hint.setWordWrap(True)
                 vl.addWidget(hint)
                 widget = wrap
-            form.addRow(label, widget)
+            if f.kind in ("text", "formula"):
+                form.addRow(label)
+                form.addRow(widget)
+            else:
+                form.addRow(label, widget)
         lay.addLayout(form)
 
-        note = QLabel("Допустимы дроби (1/2), десятичные (2.5 или 2,5), корни sqrt(3) или √3, pi.")
-        note.setObjectName("hint")
-        note.setWordWrap(True)
-        lay.addWidget(note)
+        kinds = {f.kind for f in self.task.fields}
+        notes = []
+        if kinds & {"expr", "vector"}:
+            notes.append("Числа: дроби 1/2, десятичные 2.5 или 2,5, корни sqrt(3) или √3, pi.")
+        if "formula" in kinds:
+            notes.append("Формулы: x^2, 2x, sin x, exp(x), ln x, lg x, sqrt(x), abs(x), pi, e; десятичная точка.")
+        if any(f.kind == "text" and f.file_import for f in self.task.fields):
+            notes.append("Данные: числа через пробел, «;» или с новой строки; можно вставить столбцы из Excel "
+                         "или загрузить CSV/Excel кнопкой «Из файла…».")
+        for n in notes:
+            note = QLabel(n)
+            note.setObjectName("hint")
+            note.setWordWrap(True)
+            lay.addWidget(note)
 
         self.btn_solve = QPushButton("Решить   (Ctrl+Enter)")
         self.btn_solve.setObjectName("primary")
-        self.btn_solve.clicked.connect(self.solve)
+        self.btn_solve.clicked.connect(lambda: self.solve())
         lay.addWidget(self.btn_solve)
+        self.btn_cancel = QPushButton("Прервать")
+        self.btn_cancel.clicked.connect(self.cancel)
+        self.btn_cancel.setVisible(False)
+        lay.addWidget(self.btn_cancel)
 
         self.error_label = QLabel("")
         self.error_label.setObjectName("error")
@@ -136,6 +180,42 @@ class TaskPage(QWidget):
         scroll.setMinimumWidth(340)
         return scroll
 
+    def _text_editor(self, f) -> QWidget:
+        box = QWidget()
+        vl = QVBoxLayout(box)
+        vl.setContentsMargins(0, 0, 0, 0)
+        ed = QPlainTextEdit(str(f.default))
+        mono = QFont("Consolas")
+        mono.setStyleHint(QFont.Monospace)
+        ed.setFont(mono)
+        ed.setTabChangesFocus(False)
+        ed.setFixedHeight(max(3, f.rows) * 20 + 12)
+        self.editors[f.key] = ed
+        vl.addWidget(ed)
+        if f.file_import:
+            row = QHBoxLayout()
+            btn = QPushButton("Из файла…")
+            btn.setToolTip("Загрузить данные из CSV, TXT или Excel (первый лист)")
+            btn.clicked.connect(lambda _=False, e=ed: self._import_file(e))
+            clear = QPushButton("Очистить")
+            clear.clicked.connect(ed.clear)
+            row.addWidget(btn)
+            row.addWidget(clear)
+            row.addStretch(1)
+            vl.addLayout(row)
+        return box
+
+    def _import_file(self, editor):
+        path, _ = QFileDialog.getOpenFileName(self, "Загрузить данные", "",
+                                              "Данные (*.csv *.tsv *.txt *.dat *.xlsx *.xlsm);;Все файлы (*)")
+        if not path:
+            return
+        try:
+            editor.setPlainText(load_table_file(path))
+            self.status.emit(f"Данные загружены: {path}", False)
+        except Exception as ex:
+            self.error_label.setText(f"Не удалось прочитать файл: {ex}")
+
     def values(self) -> Dict[str, Any]:
         out = {}
         for f in self.task.fields:
@@ -144,6 +224,8 @@ class TaskPage(QWidget):
                 out[f.key] = tuple(e.text().strip() for e in ed)
             elif f.kind == "choice":
                 out[f.key] = ed.currentText()
+            elif f.kind == "text":
+                out[f.key] = ed.toPlainText()
             else:
                 out[f.key] = ed.text().strip()
         return out
@@ -158,14 +240,16 @@ class TaskPage(QWidget):
                     e.setText(str(v))
             elif f.kind == "choice":
                 ed.setCurrentText(str(val))
+            elif f.kind == "text":
+                ed.setPlainText(str(val))
             else:
                 ed.setText(str(val))
 
-    def _on_preset(self, index: int):
+    def _on_preset(self, index: int, blocking: bool = False):
         if index <= 0:
             return
         self.set_values(self.task.presets[index - 1].values)
-        self.solve()
+        self.solve(blocking)
 
     # ------------------------------------------------------------------ результаты
     def _build_results(self) -> QWidget:
@@ -200,13 +284,56 @@ class TaskPage(QWidget):
         lay.addWidget(self.tabs, 1)
         return holder
 
-    def solve(self):
-        try:
-            res = self.task.run(self.values())
-        except Exception as ex:  # ошибки ввода и математические исключения показываем пользователю
-            msg = str(ex) or ex.__class__.__name__
-            self.error_label.setText(f"Ошибка: {msg}")
-            self.status.emit(f"Ошибка: {msg}", True)
+    # ------------------------------------------------------------------ решение в фоновом потоке
+    def solve(self, blocking: bool = False):
+        """
+        Запуск решения. По умолчанию — в фоновом потоке, чтобы окно не «зависало» на долгих
+        символьных вычислениях; blocking=True — синхронно (тесты, сценарии).
+        """
+        values = self.values()
+        if blocking:
+            self._request += 1
+            self._finish(self._request, *_run_task(self.task, values))
+            return
+        self._request += 1
+        req = self._request
+        self._started = time.monotonic()
+        self._set_busy(True)
+        threading.Thread(target=lambda: self._relay.done.emit(req, *_run_task(self.task, values)), daemon=True).start()
+
+    def cancel(self):
+        """Прервать ожидание: результат текущего вычисления будет отброшен (поток завершится сам)."""
+        self._request += 1
+        self._set_busy(False)
+        self.status.emit("Вычисление прервано", True)
+
+    def _set_busy(self, busy: bool):
+        self.btn_solve.setEnabled(not busy)
+        self.btn_cancel.setVisible(busy)
+        if busy:
+            self.btn_solve.setText("Вычисляю…")
+            self._busy_timer.start(250)
+        else:
+            self.btn_solve.setText("Решить   (Ctrl+Enter)")
+            self._busy_timer.stop()
+
+    def _tick(self):
+        dt = time.monotonic() - self._started
+        msg = f"Вычисляю… {dt:.0f} с"
+        if dt > 5:
+            msg += " — сложные символьные вычисления могут занимать время; можно прервать"
+        self.status.emit(msg, False)
+
+    def _on_done(self, req: int, res, err: str):
+        if req != self._request:  # устаревший результат (пользователь прервал или запустил заново)
+            return
+        self._set_busy(False)
+        self._finish(req, res, err)
+
+    def _finish(self, req: int, res, err: str):
+        if err:
+            self.error_label.setText(f"Ошибка: {err}")
+            self.status.emit(f"Ошибка: {err}", True)
             return
         self.error_label.setText("")
         self.result = res

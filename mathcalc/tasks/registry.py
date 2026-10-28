@@ -32,6 +32,8 @@ class Field:
       kind = "expr"   — одно значение (число или выражение: 1/2, sqrt(3), pi)
       kind = "vector" — несколько значений в строку (точка, вектор, коэффициенты); components — подписи
       kind = "choice" — выбор из списка choices
+      kind = "formula" — формула или произвольная строка (без разбора как числа)
+      kind = "text"   — многострочные данные (таблица измерений); file_import — кнопка загрузки из файла
     """
     key: str
     label: str
@@ -40,6 +42,8 @@ class Field:
     components: Tuple[str, ...] = ()
     choices: Tuple[str, ...] = ()
     hint: str = ""
+    rows: int = 0
+    file_import: bool = False
 
 
 @dataclass
@@ -125,3 +129,11 @@ def plane(key: str, label: str, default: Sequence[Any]) -> Field:
 
 def choice(key: str, label: str, choices: Sequence[str], default: Optional[str] = None) -> Field:
     return Field(key, label, "choice", default or choices[0], choices=tuple(choices))
+
+
+def formula(key: str, label: str, default: str, hint: str = "") -> Field:
+    return Field(key, label, "formula", default, hint=hint)
+
+
+def text(key: str, label: str, default: str, hint: str = "", rows: int = 7, file_import: bool = True) -> Field:
+    return Field(key, label, "text", default, hint=hint, rows=rows, file_import=file_import)

@@ -8,7 +8,7 @@ from ..core.result import Scene3D
 from .theme import PlotTheme, DARK
 
 
-def _style_axes(ax, theme: PlotTheme):
+def _style_axes(ax, theme: PlotTheme, labels=("X", "Y", "Z")):
     ax.figure.patch.set_facecolor(theme.background)
     ax.set_facecolor(theme.background)
     for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
@@ -17,16 +17,42 @@ def _style_axes(ax, theme: PlotTheme):
         axis.pane.set_edgecolor(theme.grid)
         axis.line.set_color(theme.text)
     ax.tick_params(colors=theme.text, labelsize=8)
-    for setter, name in ((ax.set_xlabel, 'X'), (ax.set_ylabel, 'Y'), (ax.set_zlabel, 'Z')):
+    for setter, name in zip((ax.set_xlabel, ax.set_ylabel, ax.set_zlabel), labels):
         setter(name, color=theme.text, labelpad=4, fontweight='bold')
     ax.grid(True, linestyle='--', alpha=0.4, color=theme.grid)
+
+
+def _finite(a) -> np.ndarray:
+    a = np.asarray(a, dtype=float).ravel()
+    return a[np.isfinite(a)]
+
+
+def _robust(a) -> np.ndarray:
+    """Значения без крайних выбросов (особые точки поверхности)."""
+    v = _finite(a)
+    if v.size < 50:
+        return v
+    lo, hi = np.percentile(v, [1, 99])
+    span = hi - lo
+    return v[(v >= lo - 0.5 * span) & (v <= hi + 0.5 * span)]
+
+
+def _padded(vals):
+    if not vals:
+        return (-5.0, 5.0)
+    a, b = float(min(vals)), float(max(vals))
+    if b - a < 1e-12:
+        d = abs(a) * 0.1 or 1.0
+        return (a - d, b + d)
+    d = (b - a) * 0.05
+    return (a - d, b + d)
 
 
 def render_scene3d(ax, scene: Optional[Scene3D], theme: PlotTheme = DARK):
     """Рисует сцену на 3D-осях ax (очищая их). Область просмотра — куб, охватывающий объекты."""
     ax.cla()
-    _style_axes(ax, theme)
     scene = scene or Scene3D()
+    _style_axes(ax, theme, scene.labels)
     palette = theme.palette
 
     xs, ys, zs = [], [], []
@@ -43,14 +69,32 @@ def render_scene3d(ax, scene: Optional[Scene3D], theme: PlotTheme = DARK):
         ys += [vec['p'][1], vec['p'][1] + vec['v'][1]]
         zs += [vec['p'][2], vec['p'][2] + vec['v'][2]]
 
-    if xs:
-        lo = np.array([min(xs), min(ys), min(zs)]) - 2.5
-        hi = np.array([max(xs), max(ys), max(zs)]) + 2.5
+    if scene.surfaces or scene.curves:
+        # графики функций: у каждой оси свой диапазон (масштабы величин обычно разные)
+        for srf in scene.surfaces:
+            xs += list(_finite(srf['X'])); ys += list(_finite(srf['Y'])); zs += list(_robust(srf['Z']))
+        for crv in scene.curves:
+            xs += list(_finite(crv['x'])); ys += list(_finite(crv['y'])); zs += list(_finite(crv['z']))
+        rx, ry, rz = (_padded(xs), _padded(ys), _padded(zs))
+        half = max(rx[1] - rx[0], ry[1] - ry[0]) / 2
     else:
-        lo, hi = np.array([-5.0] * 3), np.array([5.0] * 3)
-    half = max(float(np.max(hi - lo)), 6.0) / 2
-    c = (lo + hi) / 2
-    rx, ry, rz = [(c[i] - half, c[i] + half) for i in range(3)]
+        if xs:
+            lo = np.array([min(xs), min(ys), min(zs)]) - 2.5
+            hi = np.array([max(xs), max(ys), max(zs)]) + 2.5
+        else:
+            lo, hi = np.array([-5.0] * 3), np.array([5.0] * 3)
+        half = max(float(np.max(hi - lo)), 6.0) / 2
+        c = (lo + hi) / 2
+        rx, ry, rz = [(c[i] - half, c[i] + half) for i in range(3)]
+
+    for srf in scene.surfaces:
+        Z = np.where((srf['Z'] >= rz[0]) & (srf['Z'] <= rz[1]), srf['Z'], np.nan)
+        ax.plot_surface(srf['X'], srf['Y'], Z, cmap=srf['cmap'], alpha=0.88, linewidth=0.2,
+                        edgecolor=theme.grid, rstride=1, cstride=1, antialiased=True)
+        if srf['label']:
+            ax.plot([], [], color=theme.palette[0], linewidth=6, alpha=0.6, label=srf['label'])
+    for crv in scene.curves:
+        ax.plot(crv['x'], crv['y'], crv['z'], color=crv['color'], linewidth=2.4, label=crv['label'] or None)
 
     grid_res = 12
     for i, pl in enumerate(scene.planes):

@@ -13,16 +13,23 @@ Point2 = Tuple[float, float]
 Point3 = Tuple[float, float, float]
 
 
-def new_scene2d() -> Dict[str, Any]:
+def new_scene2d(equal: bool = True, title: str = "") -> Dict[str, Any]:
     """
     Пустая 2D-сцена. Формат элементов:
-      points:   (x, y, подпись, цвет)
-      segments: ((x1, y1), (x2, y2), подпись, цвет, стиль линии)
-      lines:    (x0, y0, dx, dy, подпись, цвет)  — бесконечная прямая через точку по направлению
-      curves:   (массив x, массив y, подпись, цвет)
-      title:    заголовок графика
+      points:    (x, y, подпись, цвет)                       — отмеченные точки с подписью
+      segments:  ((x1, y1), (x2, y2), подпись, цвет, стиль)  — отрезки
+      lines:     (x0, y0, dx, dy, подпись, цвет[, стиль])    — бесконечные прямые
+      curves:    (xs, ys, подпись, цвет[, стиль])            — кривые (NaN разрывает линию)
+      scatter:   (xs, ys, подпись, цвет)                     — облако точек без подписей
+      errorbars: (xs, ys, yerr, xerr, подпись, цвет)         — точки с погрешностями (xerr/yerr могут быть None)
+      bands:     (xs, y_низ, y_верх, подпись, цвет)          — закрашенная полоса (доверительный интервал, площадь)
+      contours:  (X, Y, Z, уровни, подпись, цвет)            — линии уровня Z(X, Y) = уровни
+      bars:      (подписи, значения, цвет)                   — столбчатая диаграмма (вместо координатного чертежа)
+    Параметры вида: title, equal (одинаковый масштаб осей), xlabel, ylabel, xlim, ylim.
     """
-    return {'points': [], 'segments': [], 'lines': [], 'curves': [], 'title': ''}
+    return {'points': [], 'segments': [], 'lines': [], 'curves': [], 'scatter': [], 'errorbars': [],
+            'bands': [], 'contours': [], 'bars': None, 'title': title, 'equal': equal, 'xlabel': '', 'ylabel': '',
+            'xlim': None, 'ylim': None}
 
 
 @dataclass
@@ -33,6 +40,9 @@ class Scene3D:
     points: List[Dict[str, Any]] = field(default_factory=list)
     vectors: List[Dict[str, Any]] = field(default_factory=list)
     segments: List[Dict[str, Any]] = field(default_factory=list)
+    surfaces: List[Dict[str, Any]] = field(default_factory=list)
+    curves: List[Dict[str, Any]] = field(default_factory=list)
+    labels: Tuple[str, str, str] = ("X", "Y", "Z")
 
     def add_plane(self, A, B, C, D, label: str = "Плоскость", color: Optional[str] = None):
         self.planes.append({'A': float(A), 'B': float(B), 'C': float(C), 'D': float(D), 'label': label, 'color': color})
@@ -57,8 +67,19 @@ class Scene3D:
                               'label': label, 'color': color})
         return self
 
+    def add_surface(self, X, Y, Z, label: str = "", cmap: str = "viridis"):
+        """Поверхность по сеткам X, Y, Z (NaN — пропуски вне области определения)."""
+        self.surfaces.append({'X': X, 'Y': Y, 'Z': Z, 'label': label, 'cmap': cmap})
+        return self
+
+    def add_curve(self, xs, ys, zs, label: str = "", color: str = "#EF4444"):
+        """Пространственная кривая по массивам координат."""
+        self.curves.append({'x': xs, 'y': ys, 'z': zs, 'label': label, 'color': color})
+        return self
+
     def is_empty(self) -> bool:
-        return not (self.planes or self.lines or self.points or self.vectors or self.segments)
+        return not (self.planes or self.lines or self.points or self.vectors or self.segments
+                    or self.surfaces or self.curves)
 
 
 @dataclass
